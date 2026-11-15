@@ -9,7 +9,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 
 ### Master Project Documentation
-- 📘 **[User Action Guide](USER_ACTION_GUIDE.md)**: Simple, plain-English step-by-step guide explaining how each feature works, how to use the app, and how the AR/VR HUD operates.
+- 📘 **[User Action Guide](USER_ACTION_GUIDE.md)**: Simple, plain-English step-by-step guide explaining how each feature works, how to use the app, and how the AR/VR HUD operates over rover photos.
 - 🔬 **[Technical Context & AI Specification](TECHNICAL_CONTEXT.md)**: Comprehensive architectural reference with TypeScript schemas, USGS data tables, NASA endpoints, and biomechanical equations.
 
 ---
@@ -27,139 +27,85 @@ Extravehicular Activity (EVA) on the surface of Mars presents an unforgiving phy
 
 ---
 
-## 2. System Architecture
+## 2. Ingested NASA & USGS Planetary Datasets
 
-THADAM is built on **Vite + React + TypeScript** with strict modular separation of concerns:
+To cut through ambiguous repository searches (such as the 2,038 search results in NASA Mars Trek), THADAM directly integrates the official, verified product identifiers:
 
-```text
-thadam/
-├── index.html                         # Entry HTML with military HUD typography & Leaflet assets
-├── package.json                       # Core dependencies (Three.js, Leaflet, Lucide, Tailwind)
-├── tsconfig.json                      # Strict TypeScript compiler options
-├── vite.config.ts                     # Vite bundler configuration
-├── README.md                          # Architecture, NASA data sources, math formulas & SI disclosure
-└── src/
-    ├── main.tsx                       # React DOM root mounting
-    ├── App.tsx                        # Flight Director bar, MET clock, Display Mode router & simulation controls
-    ├── types/
-    │   └── eva.ts                     # Strongly typed interfaces for TerrainCell, SiteConfig, Waypoint, RouteMetrics
-    ├── data/
-    │   └── sites.ts                   # Real Martian landing coordinates & waypoints (Mount Sharp, Jezero, Olympus)
-    ├── engine/
-    │   ├── terrainGenerator.ts        # Synthesizes 48x48 DEM grids with HiRISE elevation, slope (°), THEMIS TIU, CRISM, RAD, UHF LoS
-    │   ├── astarSolver.ts             # 8-directional profile-weighted A* solver (LOW_O2_SAFE, MAX_SCIENCE, EMERGENCY_HAB_ABORT)
-    │   ├── uhfRaycaster.ts            # Bresenham 3D elevation Line-of-Sight raycasting from Habitat 2.8m comms mast
-    │   └── biomechanics.ts            # xEMU suit workload (Watts), metabolic O2 burn, cumulative mSv, & Apollo/Artemis 20% limit
-    ├── services/
-    │   └── nasaRoverApi.ts            # Curiosity/Perseverance Mastcam API + procedural Canvas Mars horizon & AR target lock
-    └── components/
-        ├── HabitatViewport3D.tsx      # Three.js WebGL 3D terrain mesh, orbital heatmaps, glowing path, walkback ring, agents
-        ├── GlovedTabletView.tsx       # Wrist/chest terminal: Leaflet + JPL Mars Trek WMTS tiles & tactical costmap overlay
-        ├── HelmetVisorHUD.tsx         # Peripheral AR visor HUD with 3D first-person camera, compass tape, xEMU gauges, hotkeys
-        ├── ElevationProfileChart.tsx  # Real-time Canvas 2D cross-section plotting elevation (cyan) vs. cumulative O2 (orange)
-        └── SurfacePovCard.tsx         # Eye-level ground-truth rover POV viewport with interactive geological callouts
-```
+### A. NASA Mars Trek & PDS Imaging Node (`trek.nasa.gov/mars`)
+- **Gale Crater (Mount Sharp)**: `Gale_CTX_BlockAdj_dd` (5 m/px controlled mosaic) & HiRISE DTM `ESP_023957_1755` (1 m/px elevation).
+- **Jezero Crater (Delta Front)**: `Jezero_CTX_mosaic` (5 m/px controlled mosaic) & HiRISE DTM `ESP_037128_1985`.
+- **Global Altimetry**: `Mars_MGS_MOLA_ClrShade_merge_global_463m` (MOLA Shaded Relief).
+- **Global Thermal Inertia**: `Mars_MO_THEMIS-IR-Day_mosaic_global_100m_v2` (THEMIS Day IR).
+- **Global Basemap**: `Mars_Viking_MDIM21_ClrMosaic_global_232m` (232 m/px).
+
+### B. USGS SIM 3292 Geologic Map of Mars (Tanaka et al., 2014)
+- **Portal ID**: `fc004c3d21b64c398ed5458580ab7c58` (USGS Astrogeology WebAppViewer).
+- **Live WMS Service**: `https://astrowebmaps.wr.usgs.gov/webmap/ows/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=SIM3292_Geology`.
+- **Stratigraphic Matrix (`src/data/usgsGeologyUnits.ts`)**: Encodes physical rock mechanics (bulk density, compressive strength in MPa, suited boot friction coefficient $\mu_s$, and GCR radiation shielding score) across 8 dominant units (`lAb`, `AHv`, `Hpe`, `Hch`, `Hsu`, `mNh`, `HNch`, `lNl`).
+
+### C. Live NASA MMGIS Telemetry & Dual-Rover API
+- **Perseverance (M20) Live Waypoints GeoJSON**: `https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_waypoints.json`
+- **Perseverance (M20) Live Traverse GeoJSON**: `https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_traverse.json`
+- **Curiosity (MSL) Live Waypoints GeoJSON**: `https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json`
+- **Curiosity (MSL) Live Traverse GeoJSON**: `https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_traverse.json`
+- **Camera Instrument Selectors**: Support for `MASTCAM` / `Mastcam-Z`, `NAVCAM`, `HAZCAM` (Front/Rear avoidance), and `SUPERCAM_RMI` (Remote Micro-Imager).
+
+### D. NASA Science Curiosity Path Up Mount Sharp (10 Authentic Stages)
+Traverses chronologically from the landing datum to the groundwater boxwork network:
+1. **Bradbury Landing** (Sol 0, $-4.59^\circ\text{S}, 137.44^\circ\text{E}$, Elev: $-4501\text{m}$)
+2. **Yellowknife Bay** (Sol 125, $-4.58^\circ\text{S}, 137.45^\circ\text{E}$, Elev: $-4520\text{m}$)
+3. **Pahrump Hills** (Sol 750, $-4.61^\circ\text{S}, 137.41^\circ\text{E}$, Elev: $-4460\text{m}$)
+4. **Murray Buttes** (Sol 1400, $-4.62^\circ\text{S}, 137.39^\circ\text{E}$, Elev: $-4420\text{m}$)
+5. **Vera Rubin Ridge** (Sol 1800, $-4.63^\circ\text{S}, 137.38^\circ\text{E}$, Elev: $-4210\text{m}$)
+6. **Glen Torridon Clay Unit** (Sol 2300, $-4.64^\circ\text{S}, 137.37^\circ\text{E}$, Elev: $-4260\text{m}$)
+7. **Greenheugh Pediment** (Sol 2700, $-4.65^\circ\text{S}, 137.36^\circ\text{E}$, Elev: $-4180\text{m}$)
+8. **Sulfate-Bearing Unit** (Sol 3200, $-4.66^\circ\text{S}, 137.35^\circ\text{E}$, Elev: $-4050\text{m}$)
+9. **Gediz Vallis Channel** (Sol 3600, $-4.67^\circ\text{S}, 137.34^\circ\text{E}$, Elev: $-3980\text{m}$)
+10. **Boxwork Fracture Web** (Sol 4000+, $-4.68^\circ\text{S}, 137.33^\circ\text{E}$, Elev: $-3850\text{m}$)
 
 ---
 
 ## 3. Mathematical & Geophysical Formulations
 
-### A. 3D Bresenham UHF Line-of-Sight (LoS) Raycasting
-The Habitat is equipped with a 2.8-meter UHF communications mast positioned at $(x_h, y_h)$ with absolute height $z_{mast} = z(x_h, y_h) + 2.8\,\text{m}$. An astronaut at target cell $(x_t, y_t)$ carries a helmet transceiver at height $z_{rx} = z(x_t, y_t) + 1.8\,\text{m}$.
+### A. Pinhole Camera Matrix AR Reticle Projection
+To superimpose AR target locks over raw 2D rover photos without a dedicated NASA AR interface:
+$$\begin{pmatrix} u \\ v \\ 1 \end{pmatrix} = \frac{1}{Z_c} \mathbf{K} \cdot \left( \mathbf{R} \cdot \begin{pmatrix} X_{mars} - X_{rover} \\ Y_{mars} - Y_{rover} \\ Z_{mars} - Z_{rover} \end{pmatrix} \right)$$
+Where $\mathbf{K}$ is the intrinsic camera matrix calibrated for Mastcam-Z focal length ($f_x = f_y \approx 1600\,\text{px}$) and principal center $(600, 300)$, and $\mathbf{R}$ is the 3D rotation matrix constructed from camera mast azimuth and elevation tilt.
 
-The raycaster traces the 2D grid line using Bresenham's line algorithm. At fractional step $t = \frac{i}{N}$:
-$$z_{ray}(t) = z_{mast} + t \cdot (z_{rx} - z_{mast})$$
-
-If the intermediate terrain elevation $z(x_i, y_i) > z_{ray}(t) - 0.5\,\text{m}$ (including a 0.5m Fresnel clearance margin), the signal path is obstructed. When obstructed, diffractive signal strength drops exponentially with ridge overhang:
+### B. 3D Bresenham UHF Line-of-Sight Raycasting
+Traces line-of-sight from the Habitat 2.8m comms mast ($z_{mast} = z(x_h, y_h) + 2.8\,\text{m}$) to an astronaut helmet receiver ($z_{rx} = z(x_t, y_t) + 1.8\,\text{m}$). Intermediate terrain blocks trigger diffraction attenuation:
 $$\text{Signal Strength} = 0.28 \cdot \exp(-0.35 \cdot \Delta z_{overhang})$$
 
-### B. Martian Suited Biomechanics & Metabolic Workload
-In Martian gravity ($g = 3.721\,\text{m/s}^2$, $0.38g$), the combined mass of the astronaut ($80\,\text{kg}$) and the pressurized xEMU suit ($140\,\text{kg}$) is $220\,\text{kg}$, yielding a Martian weight of:
-$$W_{mars} = 220\,\text{kg} \times 3.721\,\text{m/s}^2 \approx 818.62\,\text{N}$$
-
-The metabolic power expenditure model adapts Santee et al. and Minetti walking mechanics for pressurized EVA suits:
-- **Resting Basal Rate**: $P_{rest} = 190\,\text{W}$ (astronaut basal + suit life support avionics).
-- **Level Locomotion Work**: $P_{level} = (W_{mars} \cdot v \cdot 0.24) \times 1.28 \approx 250\,\text{W}$ at standard traverse velocity $v = 0.8\,\text{m/s}$.
-- **Slope Incline Penalty ($\theta > 0$)**:
-  $$P_{incline} = W_{mars} \cdot v \cdot \left(\sin\theta + 1.8 \sin^2\theta\right)$$
-- **Slope Decline Braking ($\theta < 0$)**: Downhill walking decreases metabolic burn down to $\theta \approx -10^\circ$, after which knee joint stabilization resistance elevates power.
-- **Surface Drag Factor**: Low thermal inertia dust ($TIU < 220\,\text{J m}^{-2}\text{K}^{-1}\text{s}^{-1/2}$) incurs up to a **+35%** mechanical drag penalty.
-
-### C. Metabolic Oxygen Consumption
-Human respiratory oxidation yields approximately $20,900\,\text{Joules}$ per Liter of $O_2$ consumed ($4.8\,\text{kcal/L}$):
-$$\dot{V}_{O2}\,(\text{L/min}) = \frac{P\,(\text{Watts}) \times 60}{20,900}$$
-At nominal $350\,\text{W}$ traverse workload, oxygen burn is $\approx 1.00\,\text{L/min}$.
-
-### D. Apollo / Artemis 20% Non-Negotiable Walkback Limit
-- Standard primary $O_2$ suit tank: $1,200\,\text{L}$ (8-hour rating).
-- Emergency Reserve Floor: $20\% \times 1,200\,\text{L} = 240\,\text{L}$.
-- Usable mission budget: $960\,\text{L}$.
-- At all times, the system computes the dynamic **Walkback Limit Radius** $R_{walkback}$: the maximum safe radial distance from Habitat where an emergency sprint return at $1.2\,\text{m/s}$ ($420\,\text{W}$) can be completed before touching the 240 L reserve floor. This boundary is rendered as a glowing dashed circle in both 3D and 2D maps.
+### C. Martian Suited Biomechanics & Apollo/Artemis Walkback Limit
+- Astronaut ($80\,\text{kg}$) + xEMU suit ($140\,\text{kg}$) = $220\,\text{kg}$ ($818.62\,\text{N}$ at $0.38g$).
+- Metabolic workload equation:
+  $$P(\theta) = P_{base} + W_{mars} \cdot v \cdot (\sin\theta + 1.8 \sin^2\theta) \times \mu_{dust}$$
+- Oxygen burn rate: $1\,\text{L } O_2 \approx 20,900\,\text{J}$ ($4.8\,\text{kcal}$).
+- Dynamic Walkback Limit Radius: Enforces the non-negotiable **Apollo/Artemis 20% $O_2$ Reserve Floor** ($240\,\text{L}$), rendering a safe boundary circle beyond which an emergency sprint back to Habitat would breach reserve.
 
 ---
 
-## 4. NASA Data Sources & Acknowledgments
+## 4. Operational Form Factors
 
-| Dataset / Instrument | Source Agency / Mission | Application in THADAM |
-| :--- | :--- | :--- |
-| **HiRISE (High Resolution Imaging Science Experiment)** | NASA / JPL / University of Arizona (MRO) | Digital Elevation Models (DEM) and geomorphology modeling (boxwork ridge lattices, delta scarps, volcanic pits). |
-| **CRISM (Compact Reconnaissance Imaging Spectrometer)** | NASA / JPL / JHUAPL (MRO) | Surface hydration spectral indices, detecting clay smectites and hydrated sulfates. |
-| **THEMIS (Thermal Emission Imaging System)** | NASA / JPL / Arizona State University (2001 Mars Odyssey) | Thermal inertia values (150–600 TIU) distinguishing fine eolian dust traps from dense bedrock. |
-| **MSL RAD (Radiation Assessment Detector)** | NASA / SwRI (Curiosity Rover) | Surface cosmic ray and solar energetic particle dosimetry ($18–45\,\mu\text{Sv/h}$). |
-| **Mars Trek Global Tile Service** | NASA / JPL Solar System Treks | Live Viking MDIM21 232m/pixel global color mosaic WMTS tile streaming. |
-| **Curiosity & Perseverance Mastcam APIs** | NASA / JPL-Caltech / Nebulum API | Eye-level ground-truth surface imagery and geological targets. |
+1. **3D Habitat Flight Director Viewport (`HabitatViewport3D`)**: Three.js WebGL canvas with vertex-colored orbital heatmaps (Elevation, THEMIS Thermal Inertia, CRISM Hydration, UHF Comms, Tactical Cost, and **USGS SIM 3292 Stratigraphy**).
+2. **Gloved Wrist/Chest Tablet View (`GlovedTabletView`)**: Tactical Leaflet mapping terminal with 54px touch targets, switchable NASA Mars Trek basemaps (Viking, MOLA, THEMIS), and USGS geology overlay.
+3. **Helmet AR Visor HUD (`HelmetVisorHUD`)**: Peripheral AR heads-up display with 360° compass heading tape, waypoint azimuth chevrons, xEMU life support gauges, slope alarms, and hotkeys (`[1]` Drop Core Pin, `[2]` Next Waypoint POV, `[3]` Abort to Hab).
+4. **Real-Time Cross-Section Chart (`ElevationProfileChart`)**: Real-time 2D Canvas cross-section plotting elevation (cyan) vs. cumulative $O_2$ consumption (orange) vs. 20% reserve ceiling (red).
+5. **Ground-Truth Rover POV (`SurfacePovCard`)**: Dual-rover live imagery with camera selector (`MAST`, `NAV`, `HAZ`, `SUPER`) and AR diamond target locks displaying mineralogy and USGS unit classifications.
 
 ---
 
-## 5. SI Units Disclosure
+## 5. Token-Free Local DEM Extraction Tool
 
-In strict adherence to international aerospace engineering and NASA mission standards:
-- **Distance / Elevation**: Meters ($\text{m}$)
-- **Mass**: Kilograms ($\text{kg}$)
-- **Velocity**: Meters per second ($\text{m/s}$)
-- **Atmospheric Pressure**: Pascals ($\text{Pa}$)
-- **Mechanical & Metabolic Power**: Watts ($\text{W}$)
-- **Energy**: Joules ($\text{J}$)
-- **Oxygen Volume**: Liters ($\text{L}$) at Standard Temperature and Pressure
-- **Radiation Dose**: MicroSieverts ($\mu\text{Sv}$) and milliSieverts ($\text{mSv}$)
-- **Thermal Inertia**: $\text{J}\cdot\text{m}^{-2}\cdot\text{K}^{-1}\cdot\text{s}^{-1/2}$ (TIU)
+If you ever download a custom high-resolution HiRISE GeoTIFF DEM from NASA Mars Trek or PDS:
+```powershell
+python scripts/pds_dem_extractor.py path_to_input.tif [src/data/custom_dem.json]
+```
+This downsamples any raw multi-gigabyte raster locally into the compact 15 KB $48\times 48$ elevation matrix required by THADAM with **zero LLM tokens**.
 
 ---
 
-## 6. Operational Form Factors & Controls
-
-### Form Factors
-1. **3D Habitat Flight Director Viewport (`HabitatViewport3D`)**:
-   - Three.js WebGL canvas with dynamic height displacement from 48x48 DEM grid.
-   - Dynamic vertex-colored orbital heatmaps: Topographic elevation, THEMIS thermal inertia, CRISM hydration, UHF line-of-sight, and Tactical costmap.
-   - Glowing 3D path ribbon and Apollo/Artemis Walkback Limit ring.
-   - Real-time animated agents: EV-1 (gold), EV-2 (cyan), ROVER-01 (emerald).
-   - Raycasting cursor terrain inspector.
-2. **Gloved Wrist/Chest Tablet View (`GlovedTabletView`)**:
-   - Secondary astronaut terminal optimized for bulky EVA gloves.
-   - 56px–64px oversized tactile touch targets.
-   - Leaflet 2D mapping with live JPL Mars Trek WMTS tiles and high-contrast tactical costmap overlay.
-   - Two-step safety interlock on Emergency Hab Abort.
-3. **Helmet AR Visor HUD (`HelmetVisorHUD`)**:
-   - First-person 3D terrain perspective with peripheral AR visor instrumentation.
-   - 360° dynamic compass heading tape with target azimuth chevrons.
-   - xEMU life support gauges (primary O2, suit pressure, heart rate, core temperature).
-   - RAD dosimeter bar with color-coded safety tiers.
-   - Picture-in-Picture (PiP) rover forward-view camera.
-4. **Real-Time Cross-Section Chart (`ElevationProfileChart`)**:
-   - Real-time Canvas 2D plot comparing terrain elevation profile (cyan) against cumulative O2 consumption (orange) and 20% reserve floor (red).
-5. **Ground-Truth Rover POV (`SurfacePovCard`)**:
-   - Eye-level Curiosity/Perseverance imagery with interactive AR diamond reticle target locks and mineralogy inspector.
-
-### Keyboard Hotkeys
-- **`[1]`**: Drop Core Pin (places sample marker at current astronaut position)
-- **`[2]`**: Cycle Next Waypoint POV (switches target acquisition)
-- **`[3]`**: Emergency Abort to Hab (initiates rapid direct reverse traverse)
-- **`[SPACE]`**: Play / Pause Traverse Simulation
-
----
-
-## 7. Quickstart & Installation
+## 6. Quickstart & Installation
 
 ```bash
 # Clone the repository
@@ -172,7 +118,7 @@ npm install
 # Launch development server
 npm run dev
 
-# Build production bundle
+# Run production build & strict TypeScript verification
 npm run build
 ```
 
