@@ -11,22 +11,52 @@ export interface GeologicalTarget {
   description: string;
   crismHydrationPct: number;
   hazardRisk: 'LOW' | 'MODERATE' | 'HIGH';
+  targetSol?: number;
+  usgsUnit?: string;
 }
 
+export type RoverMission = 'curiosity' | 'perseverance';
+export type RoverCamera = 'MAST' | 'NAV' | 'HAZ' | 'SUPER';
+
 export class NasaRoverService {
-  private static readonly CURIOSITY_ENDPOINT = 'https://rovers.nebulum.one/api/v1/rovers/curiosity/photos';
+  private static readonly CURIOSITY_PRIMARY = 'https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/photos';
+  private static readonly PERSEVERANCE_PRIMARY = 'https://api.nasa.gov/mars-photos/api/v1/rovers/perseverance/photos';
+  private static readonly NEBULUM_FALLBACK = 'https://rovers.nebulum.one/api/v1/rovers/curiosity/photos';
+
+  private static readonly MMGIS_M20_WAYPOINTS = 'https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_waypoints.json';
+  private static readonly MMGIS_MSL_WAYPOINTS = 'https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json';
 
   /**
-   * Fetches authentic eye-level Mastcam/Navcam imagery from the Mars Rover API.
-   * If network fails, CORS blocks, or rate-limited, safely returns empty array to trigger canvas fallback.
+   * Fetches authentic eye-level Mastcam/Navcam imagery from NASA Rover APIs.
+   * Supports both Curiosity (Gale) and Perseverance (Jezero).
    */
-  public static async fetchRoverPhotos(sol = 1000, camera = 'MAST'): Promise<GroundTruthPhoto[]> {
+  public static async fetchRoverPhotos(
+    mission: RoverMission = 'curiosity',
+    sol = 1000,
+    camera: RoverCamera = 'MAST'
+  ): Promise<GroundTruthPhoto[]> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4-second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-      const url = `${this.CURIOSITY_ENDPOINT}?sol=${sol}&camera=${camera}&page=1`;
-      const response = await fetch(url, { signal: controller.signal });
+      // Translate camera code for NASA API
+      const camCode =
+        camera === 'MAST' ? (mission === 'perseverance' ? 'MCZ_RIGHT' : 'MAST') :
+        camera === 'NAV' ? (mission === 'perseverance' ? 'NAVCAM_RIGHT' : 'NAVCAM') :
+        camera === 'HAZ' ? (mission === 'perseverance' ? 'FRONT_HAZCAM_RIGHT_A' : 'FHAZ') :
+        (mission === 'perseverance' ? 'SUPERCAM_RMI' : 'MAST');
+
+      const baseUrl = mission === 'perseverance' ? this.PERSEVERANCE_PRIMARY : this.CURIOSITY_PRIMARY;
+      const url = `${baseUrl}?sol=${sol}&camera=${camCode}&api_key=DEMO_KEY`;
+
+      let response: Response;
+      try {
+        response = await fetch(url, { signal: controller.signal });
+      } catch {
+        // Fallback to Nebulum proxy if official api.nasa.gov has CORS / demo limit
+        response = await fetch(`${this.NEBULUM_FALLBACK}?sol=${sol}&camera=MAST&page=1`, { signal: controller.signal });
+      }
+
       clearTimeout(timeoutId);
 
       if (!response.ok) {
@@ -40,20 +70,39 @@ export class NasaRoverService {
         return [];
       }
 
-      return photos.slice(0, 5).map((p: any, idx: number) => ({
+      return photos.slice(0, 6).map((p: any, idx: number) => ({
         id: `ROV-${p.id || idx}`,
-        camera: p.camera?.full_name || camera,
+        camera: p.camera?.full_name || `${mission.toUpperCase()} ${camera}`,
         earthDate: p.earth_date || '2024-05-12',
         sol: p.sol || sol,
         imgSrc: p.img_src,
-        caption: `Curiosity Mastcam sol ${p.sol} geological record`,
+        caption: `${mission === 'perseverance' ? 'Perseverance Mastcam-Z' : 'Curiosity Mastcam'} Sol ${p.sol}`,
         featureCallout: `Outcrop Stratum ${idx + 1}`,
-        distanceMeters: 14.5 + idx * 8.2,
-        bearingDeg: (45 + idx * 30) % 360,
-        mineralTarget: idx % 2 === 0 ? 'Sulfate-Cemented Sandstone' : 'Basaltic Regolith Breccia',
+        distanceMeters: parseFloat((12.0 + idx * 6.5).toFixed(1)),
+        bearingDeg: (35 + idx * 30) % 360,
+        mineralTarget: idx % 2 === 0 ? 'Sulfate-Cemented Sandstone' : 'Aqueous Smectite Matrix',
       }));
     } catch {
-      // Graceful fallback to procedural canvas
+      // Graceful fallback to physical procedural canvas
+      return [];
+    }
+  }
+
+  /**
+   * Fetches official NASA MMGIS live waypoint GeoJSON features for Curiosity or Perseverance.
+   */
+  public static async fetchLiveMMGISWaypoints(mission: RoverMission): Promise<any[]> {
+    try {
+      const url = mission === 'perseverance' ? this.MMGIS_M20_WAYPOINTS : this.MMGIS_MSL_WAYPOINTS;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) return [];
+      const json = await res.json();
+      return json.features || [];
+    } catch {
       return [];
     }
   }
@@ -66,39 +115,55 @@ export class NasaRoverService {
       return [
         {
           id: 'TGT-G1',
-          name: 'Boxwork Vein Spine A-4',
+          name: 'Boxwork Vein Spine (Sol 4022)',
           screenX: 32,
           screenY: 58,
           distanceMeters: 18.2,
           bearingDeg: 124,
           mineralType: 'Crystalline Gypsum / Magnesium Sulfate',
-          description: 'Erosion-resistant blade projecting 1.8m above deflated regolith.',
-          crismHydrationPct: 78,
+          description: 'Hollow polygonal blade projecting 1.8m above deflated regolith. Formed by late-stage hydrothermal brine circulation.',
+          crismHydrationPct: 88,
           hazardRisk: 'LOW',
+          usgsUnit: 'lAb',
         },
         {
           id: 'TGT-G2',
-          name: 'Pahrump Mudstone Shelf',
+          name: 'Pahrump Hills Basal Mudstone',
           screenX: 68,
           screenY: 72,
           distanceMeters: 8.6,
           bearingDeg: 168,
           mineralType: 'Iron-Rich Smectite Mudstone',
-          description: 'Fine laminated lacustrine bedding with preserved sub-millimeter laminae.',
-          crismHydrationPct: 84,
+          description: 'Finely laminated lacustrine mudstone indicating quiet water deposition in ancient Gale Crater lake.',
+          crismHydrationPct: 92,
           hazardRisk: 'LOW',
+          usgsUnit: 'mNh',
         },
         {
           id: 'TGT-G3',
-          name: 'Scree Gully Talus Drop',
+          name: 'Vera Rubin Hematite Ridge',
+          screenX: 46,
+          screenY: 42,
+          distanceMeters: 28.5,
+          bearingDeg: 195,
+          mineralType: 'Crystalline Gray Hematite',
+          description: 'Hardened iron-oxide bedrock resisting eolian deflation. High rock compressive strength.',
+          crismHydrationPct: 62,
+          hazardRisk: 'LOW',
+          usgsUnit: 'Hpe',
+        },
+        {
+          id: 'TGT-G4',
+          name: 'Gediz Vallis Boulder Funnel',
           screenX: 84,
           screenY: 48,
-          distanceMeters: 42.0,
+          distanceMeters: 44.0,
           bearingDeg: 215,
-          mineralType: 'Unsorted Basalt Talus',
-          description: 'Steep scree-slope funnel with high slip risk.',
-          crismHydrationPct: 22,
+          mineralType: 'Unsorted Basalt Talus & Mud Breccia',
+          description: 'Debris-flow boulder field deposited by ancient torrential flash floods. Slippage risk for suited boots.',
+          crismHydrationPct: 35,
           hazardRisk: 'HIGH',
+          usgsUnit: 'HNch',
         },
       ];
     }
@@ -107,27 +172,42 @@ export class NasaRoverService {
       return [
         {
           id: 'TGT-J1',
-          name: 'Delta Scarp Bottomset Lobe',
+          name: 'Hawksbill Gap Delta Scarp',
           screenX: 25,
           screenY: 62,
           distanceMeters: 24.5,
           bearingDeg: 84,
           mineralType: 'Aqueous Smectite Clay Matrix',
-          description: 'Key organic preservation target formed in quiet bottomset paleolake waters.',
-          crismHydrationPct: 92,
+          description: 'Fine bottomset clay strata with exceptional potential for biosignature preservation.',
+          crismHydrationPct: 95,
           hazardRisk: 'LOW',
+          usgsUnit: 'mNh',
         },
         {
           id: 'TGT-J2',
-          name: 'Kodiak Butte Cliff Wall',
+          name: 'Kodiak Butte Promontory',
           screenX: 72,
           screenY: 38,
           distanceMeters: 145.0,
           bearingDeg: 112,
           mineralType: 'Topset-Foreset Delta Sandstone',
-          description: 'Truncated river delta architecture demonstrating ancient lake water level.',
+          description: 'Truncated river delta architecture documenting ancient paleolake lake levels.',
           crismHydrationPct: 45,
           hazardRisk: 'MODERATE',
+          usgsUnit: 'HNch',
+        },
+        {
+          id: 'TGT-J3',
+          name: 'Séítah Olivine Cumulate',
+          screenX: 52,
+          screenY: 78,
+          distanceMeters: 16.0,
+          bearingDeg: 140,
+          mineralType: 'Coarse Olivine Pyroxenite',
+          description: 'Igneous cumulate formed in a cooling magma body, draped by active eolian sand dunes.',
+          crismHydrationPct: 18,
+          hazardRisk: 'MODERATE',
+          usgsUnit: 'Hpe',
         },
       ];
     }
@@ -145,6 +225,7 @@ export class NasaRoverService {
         description: 'Fractured cantilever rim spanning 35m across the cavern abyss.',
         crismHydrationPct: 15,
         hazardRisk: 'HIGH',
+        usgsUnit: 'lAb',
       },
       {
         id: 'TGT-O2',
@@ -157,6 +238,7 @@ export class NasaRoverService {
         description: 'Complete cosmic ray protection zone (<2 uSv/h). Extreme cold -95°C.',
         crismHydrationPct: 88,
         hazardRisk: 'MODERATE',
+        usgsUnit: 'lAb',
       },
     ];
   }
@@ -176,10 +258,9 @@ export class NasaRoverService {
     const height = canvas.height;
 
     // 1. Martian Atmospheric Sky Gradient
-    // Mars sky color: butterscotch / dusty ochre near horizon, deep salmon/rusty brown at zenith
     const skyGrad = ctx.createLinearGradient(0, 0, 0, height * 0.58);
     const tauFactor = Math.min(1.5, Math.max(0.4, opticalDepthTau));
-    
+
     skyGrad.addColorStop(0, `rgb(${Math.round(85 * tauFactor)}, ${Math.round(48 * tauFactor)}, ${Math.round(34 * tauFactor)})`);
     skyGrad.addColorStop(0.4, `rgb(${Math.round(155 * tauFactor)}, ${Math.round(92 * tauFactor)}, ${Math.round(62 * tauFactor)})`);
     skyGrad.addColorStop(1.0, `rgb(${Math.round(205 * tauFactor)}, ${Math.round(130 * tauFactor)}, ${Math.round(88 * tauFactor)})`);
@@ -187,7 +268,7 @@ export class NasaRoverService {
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, width, height * 0.58);
 
-    // Pale bluish sun glow around solar disk (Martian inverse scattering phenomenon)
+    // Pale bluish sun glow around solar disk (Martian inverse scattering)
     const sunX = width * 0.42;
     const sunY = height * 0.22;
     const sunGlow = ctx.createRadialGradient(sunX, sunY, 2, sunX, sunY, 90);
@@ -262,13 +343,11 @@ export class NasaRoverService {
     fillDark: string
   ): void {
     ctx.save();
-    // Rock shadow on sand
     ctx.fillStyle = 'rgba(25, 8, 4, 0.6)';
     ctx.beginPath();
     ctx.ellipse(x + w * 0.1, y + h * 0.45, w * 0.65, h * 0.3, 0.15, 0, Math.PI * 2);
     ctx.fill();
 
-    // Rock body
     ctx.fillStyle = fillDark;
     ctx.beginPath();
     ctx.moveTo(x - w * 0.5, y);
@@ -280,7 +359,6 @@ export class NasaRoverService {
     ctx.closePath();
     ctx.fill();
 
-    // Sunlight facet
     ctx.fillStyle = fillLight;
     ctx.beginPath();
     ctx.moveTo(x - w * 0.5, y);

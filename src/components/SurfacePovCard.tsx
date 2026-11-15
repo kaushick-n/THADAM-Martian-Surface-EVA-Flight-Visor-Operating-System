@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GroundTruthPhoto, SiteConfig } from '../types/eva';
-import { GeologicalTarget, NasaRoverService } from '../services/nasaRoverApi';
+import { GeologicalTarget, NasaRoverService, RoverCamera, RoverMission } from '../services/nasaRoverApi';
 import { Camera, Crosshair, RefreshCw, Sparkles } from 'lucide-react';
 
 interface SurfacePovCardProps {
@@ -9,23 +9,33 @@ interface SurfacePovCardProps {
 
 export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [mission, setMission] = useState<RoverMission>(
+    site.id === 'jezero-delta' ? 'perseverance' : 'curiosity'
+  );
+  const [camera, setCamera] = useState<RoverCamera>('MAST');
   const [photos, setPhotos] = useState<GroundTruthPhoto[]>([]);
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const [useProceduralFallback, setUseProceduralFallback] = useState(true);
   const [selectedTarget, setSelectedTarget] = useState<GeologicalTarget | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Synchronize mission default when site switches
+  useEffect(() => {
+    setMission(site.id === 'jezero-delta' ? 'perseverance' : 'curiosity');
+  }, [site.id]);
+
   const targets = NasaRoverService.getSiteGeologicalTargets(site.id);
 
-  // Attempt to fetch photos from NASA Rover API on site switch
+  // Fetch photos from NASA Rover API on mission, camera, or site switch
   useEffect(() => {
     let isMounted = true;
     const fetchPhotos = async () => {
       setIsLoading(true);
-      const res = await NasaRoverService.fetchRoverPhotos(site.weather.sol, 'MAST');
+      const res = await NasaRoverService.fetchRoverPhotos(mission, site.weather.sol, camera);
       if (isMounted) {
         if (res.length > 0) {
           setPhotos(res);
+          setActivePhotoIndex(0);
           setUseProceduralFallback(false);
         } else {
           setUseProceduralFallback(true);
@@ -38,7 +48,7 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
     return () => {
       isMounted = false;
     };
-  }, [site.id, site.weather.sol]);
+  }, [mission, camera, site.id, site.weather.sol]);
 
   // Render procedural Mars horizon on canvas when fallback is active
   useEffect(() => {
@@ -53,50 +63,65 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
   const activePhoto = photos[activePhotoIndex];
 
   return (
-    <div className="relative w-full h-full min-h-[320px] bg-slate-950 rounded-lg border border-hud-border font-mono overflow-hidden flex flex-col">
-      {/* Top Telemetry Header */}
-      <div className="p-2.5 bg-hud-dark border-b border-hud-border flex items-center justify-between z-10">
+    <div className="relative w-full h-full min-h-[340px] bg-slate-950 rounded-lg border border-hud-border font-mono overflow-hidden flex flex-col">
+      {/* Top Telemetry & Rover Selection Header */}
+      <div className="p-2.5 bg-hud-dark border-b border-hud-border flex flex-wrap items-center justify-between gap-2 z-10">
         <div className="flex items-center gap-2">
           <Camera className="w-4 h-4 text-hud-cyan" />
           <span className="text-xs font-bold text-white tracking-wider">
-            GROUND TRUTH POV | {site.region.toUpperCase()}
+            GROUND TRUTH POV | {mission.toUpperCase()}
           </span>
           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-hud-amber font-bold">
             SOL {site.weather.sol}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {photos.length > 1 && !useProceduralFallback && (
-            <div className="flex items-center gap-1">
-              {photos.map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActivePhotoIndex(idx)}
-                  className={`w-4 h-4 rounded text-[9px] font-bold ${
-                    activePhotoIndex === idx
-                      ? 'bg-hud-cyan text-slate-950 font-black'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {idx + 1}
-                </button>
-              ))}
-            </div>
-          )}
-
+        {/* Mission Switcher (Curiosity vs Perseverance) */}
+        <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded border border-slate-800 text-[10px]">
           <button
-            onClick={() => setUseProceduralFallback(!useProceduralFallback)}
-            className={`px-2 py-1 text-[11px] rounded border transition flex items-center gap-1 ${
-              useProceduralFallback
-                ? 'border-hud-cyan text-hud-cyan bg-cyan-950/40'
-                : 'border-slate-700 text-slate-300 bg-slate-900'
+            onClick={() => setMission('curiosity')}
+            className={`px-2 py-0.5 rounded font-bold transition ${
+              mission === 'curiosity' ? 'bg-hud-cyan text-slate-950' : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Sparkles className="w-3 h-3" />
-            {useProceduralFallback ? 'PHYSICAL SYNTHESIS' : 'NASA ROVER API'}
+            CURIOSITY
+          </button>
+          <button
+            onClick={() => setMission('perseverance')}
+            className={`px-2 py-0.5 rounded font-bold transition ${
+              mission === 'perseverance' ? 'bg-hud-emerald text-slate-950' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            PERSEVERANCE
           </button>
         </div>
+
+        {/* Camera Selector Tabs */}
+        <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded border border-slate-800 text-[10px]">
+          {(['MAST', 'NAV', 'HAZ', 'SUPER'] as RoverCamera[]).map(cam => (
+            <button
+              key={cam}
+              onClick={() => setCamera(cam)}
+              className={`px-1.5 py-0.5 rounded font-bold transition ${
+                camera === cam ? 'bg-slate-700 text-hud-cyan' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {cam}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => setUseProceduralFallback(!useProceduralFallback)}
+          className={`px-2 py-1 text-[10px] rounded border transition flex items-center gap-1 ${
+            useProceduralFallback
+              ? 'border-hud-cyan text-hud-cyan bg-cyan-950/40'
+              : 'border-slate-700 text-slate-300 bg-slate-900'
+          }`}
+        >
+          <Sparkles className="w-3 h-3" />
+          {useProceduralFallback ? 'SYNTHESIS' : 'NASA API'}
+        </button>
       </div>
 
       {/* Main Imagery Area */}
@@ -104,7 +129,7 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
         {isLoading ? (
           <div className="flex flex-col items-center justify-center gap-2 text-hud-cyan">
             <RefreshCw className="w-6 h-6 animate-spin" />
-            <span className="text-xs">UPLINKING ROVER MASTCAM TELEMETRY...</span>
+            <span className="text-xs">UPLINKING {mission.toUpperCase()} {camera} TELEMETRY...</span>
           </div>
         ) : useProceduralFallback ? (
           <canvas
@@ -129,7 +154,7 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
           />
         )}
 
-        {/* HUD Scanlines & Crosshair Layer */}
+        {/* HUD Scanlines Layer */}
         <div className="absolute inset-0 hud-scanlines pointer-events-none" />
 
         {/* Interactive AR Target Locks Overlaid on Imagery */}
@@ -162,10 +187,34 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
                 }`}
               >
                 {tgt.name} [{tgt.distanceMeters}m]
+                {tgt.usgsUnit && (
+                  <span className="ml-1 px-1 py-0.2 rounded bg-cyan-950 text-hud-cyan font-bold">
+                    USGS:{tgt.usgsUnit}
+                  </span>
+                )}
               </div>
             </div>
           );
         })}
+
+        {/* Photo selector thumbnails if multiple photos exist */}
+        {photos.length > 1 && !useProceduralFallback && (
+          <div className="absolute bottom-2 right-2 flex items-center gap-1 z-20 bg-slate-950/80 p-1 rounded border border-slate-800">
+            {photos.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => setActivePhotoIndex(idx)}
+                className={`w-4 h-4 rounded text-[9px] font-bold ${
+                  activePhotoIndex === idx
+                    ? 'bg-hud-cyan text-slate-950 font-black'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                {idx + 1}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Bottom Geological Target Inspector Details */}
@@ -186,13 +235,14 @@ export const SurfacePovCard: React.FC<SurfacePovCardProps> = ({ site }) => {
           <div className="flex items-center gap-4 text-[10px] text-slate-400">
             <span>Range: {selectedTarget.distanceMeters}m</span>
             <span>Bearing: {selectedTarget.bearingDeg}°</span>
+            {selectedTarget.usgsUnit && <span>USGS Unit: <strong className="text-hud-cyan">{selectedTarget.usgsUnit}</strong></span>}
             <span>Hazard: <strong className={selectedTarget.hazardRisk === 'HIGH' ? 'text-hud-red' : 'text-hud-emerald'}>{selectedTarget.hazardRisk}</strong></span>
           </div>
         </div>
       ) : (
         <div className="p-2 bg-hud-dark border-t border-hud-border text-[11px] text-slate-400 flex items-center justify-between z-10">
           <span>Click on any AR diamond reticle above to lock geological target</span>
-          <span className="text-hud-cyan">FOV: 68° MASTCAM EQ</span>
+          <span className="text-hud-cyan">FOV: 68° {camera} EQ</span>
         </div>
       )}
     </div>
