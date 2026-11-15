@@ -8,6 +8,10 @@
 [![Leaflet](https://img.shields.io/badge/Leaflet-WMTS-199900?logo=leaflet&logoColor=white)](https://leafletjs.com/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 
+### Master Project Documentation
+- 📘 **[User Action Guide](USER_ACTION_GUIDE.md)**: Simple, plain-English step-by-step guide explaining how each feature works, how to use the app, and how the AR/VR HUD operates.
+- 🔬 **[Technical Context & AI Specification](TECHNICAL_CONTEXT.md)**: Comprehensive architectural reference with TypeScript schemas, USGS data tables, NASA endpoints, and biomechanical equations.
+
 ---
 
 ## 1. Executive Summary
