@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { AgentTelemetry, RouteMetrics, RouteProfile, SiteConfig, TerrainCell } from '../types/eva';
 import { TerrainGenerator } from '../engine/terrainGenerator';
+import { getUSGSUnitForSite } from '../data/usgsGeologyUnits';
 import { Eye, Layers, Radio, ShieldAlert, Sparkles, Navigation } from 'lucide-react';
 
-export type HeatmapMode = 'ELEVATION' | 'THERMAL_INERTIA' | 'HYDRATION' | 'UHF_LOS' | 'COSTMAP';
+export type HeatmapMode = 'ELEVATION' | 'THERMAL_INERTIA' | 'HYDRATION' | 'UHF_LOS' | 'COSTMAP' | 'USGS_GEOLOGY';
 
 interface HabitatViewport3DProps {
   site: SiteConfig;
@@ -240,6 +241,16 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
         return { r: 0.05, g: 0.6 + sig * 0.4, b: 0.9 + sig * 0.1 };
       }
       return { r: 0.75, g: 0.08, b: 0.25 }; // Radio shadow
+    }
+
+    if (mode === 'USGS_GEOLOGY') {
+      const unit = getUSGSUnitForSite(site.id, cell.elevation, cell.slope);
+      // Convert hex color (e.g. #3b82f6) to normalized RGB [0..1]
+      const hex = unit.colorHex.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16) / 255;
+      const g = parseInt(hex.substring(2, 4), 16) / 255;
+      const b = parseInt(hex.substring(4, 6), 16) / 255;
+      return { r, g, b };
     }
 
     // COSTMAP: low cost = bright green, high hazard = deep red
@@ -581,6 +592,18 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
         </button>
 
         <button
+          onClick={() => setHeatmapMode('USGS_GEOLOGY')}
+          className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded transition ${
+            heatmapMode === 'USGS_GEOLOGY'
+              ? 'bg-hud-emerald text-slate-900 shadow-hud-emerald'
+              : 'text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          USGS SIM 3292
+        </button>
+
+        <button
           onClick={() => setHeatmapMode('COSTMAP')}
           className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded transition ${
             heatmapMode === 'COSTMAP'
@@ -625,6 +648,7 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
             <div>THEMIS TIU: <span className="text-white">{inspectedCell.thermalInertia} TIU</span></div>
             <div>CRISM Hydr: <span className="text-hud-emerald font-bold">{(inspectedCell.hydrationIndex * 100).toFixed(0)}%</span></div>
             <div>RAD Dose: <span className="text-hud-amber">{inspectedCell.radDoseRate.toFixed(1)} μSv/h</span></div>
+            <div>USGS Unit: <span className="text-hud-cyan font-bold">{getUSGSUnitForSite(site.id, inspectedCell.elevation, inspectedCell.slope).symbol}</span></div>
             <div>
               UHF Comms: 
               <span className={`ml-1 font-bold ${inspectedCell.uhfLoS ? 'text-hud-cyan' : 'text-hud-red'}`}>

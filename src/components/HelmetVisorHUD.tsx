@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { AgentTelemetry, RouteMetrics, RouteProfile, SiteConfig, TerrainCell } from '../types/eva';
 import { TerrainGenerator } from '../engine/terrainGenerator';
+import { getUSGSUnitForSite } from '../data/usgsGeologyUnits';
 import {
   AlertOctagon,
   BatteryCharging,
@@ -383,6 +384,12 @@ export const HelmetVisorHUD: React.FC<HelmetVisorHUDProps> = ({
           <div className="text-slate-300">CRISM Hydration: <span className="text-white font-bold">{(currentCell.hydrationIndex * 100).toFixed(0)}%</span></div>
           <div className="text-slate-300">THEMIS Thermal: <span className="text-white font-bold">{currentCell.thermalInertia} TIU</span></div>
           <div className="text-slate-300">Slope: <span className="text-white font-bold">{currentCell.slope.toFixed(1)}°</span></div>
+          <div className="text-slate-300">
+            USGS Stratum: 
+            <span className="ml-1 text-hud-cyan font-bold">
+              {getUSGSUnitForSite(site.id, currentCell.elevation, currentCell.slope).symbol} ({getUSGSUnitForSite(site.id, currentCell.elevation, currentCell.slope).epoch})
+            </span>
+          </div>
         </div>
       </div>
 
