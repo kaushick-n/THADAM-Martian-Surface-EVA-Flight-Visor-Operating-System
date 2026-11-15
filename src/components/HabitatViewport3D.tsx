@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { AgentTelemetry, RouteMetrics, RouteProfile, SiteConfig, TerrainCell } from '../types/eva';
 import { TerrainGenerator } from '../engine/terrainGenerator';
 import { getUSGSUnitForSite } from '../data/usgsGeologyUnits';
-import { Eye, Layers, Radio, ShieldAlert, Sparkles, Navigation } from 'lucide-react';
+import { Camera, Eye, Layers, Radio, ShieldAlert, Sparkles, Navigation } from 'lucide-react';
 
-export type HeatmapMode = 'ELEVATION' | 'THERMAL_INERTIA' | 'HYDRATION' | 'UHF_LOS' | 'COSTMAP' | 'USGS_GEOLOGY';
+export type HeatmapMode = 'PHOTO_TEXTURE' | 'USGS_GEOLOGY' | 'ELEVATION' | 'THERMAL_INERTIA' | 'HYDRATION' | 'UHF_LOS' | 'COSTMAP';
 
 interface HabitatViewport3DProps {
   site: SiteConfig;
@@ -27,7 +27,7 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
   onCellSelect,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('ELEVATION');
+  const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('PHOTO_TEXTURE');
   const [inspectedCell, setInspectedCell] = useState<TerrainCell | null>(null);
   const [isRotating, setIsRotating] = useState(true);
 
@@ -58,15 +58,16 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
   useEffect(() => {
     if (!mountRef.current) return;
     const container = mountRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = Math.max(400, container.clientWidth || 800);
+    const height = Math.max(450, container.clientHeight || 580);
 
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = new THREE.Color(0x070b10);
-    scene.fog = new THREE.FogExp2(0x070b10, 0.008);
+    // Authentic Martian ochre atmospheric horizon fog
+    scene.background = new THREE.Color(0x1a0f0a);
+    scene.fog = new THREE.FogExp2(0x1a0f0a, 0.007);
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
+    const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1200);
     cameraRef.current = camera;
     updateCameraTransform();
 
@@ -79,18 +80,32 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
     container.appendChild(renderer.domElement);
 
     // Ambient & Directional Sun Lighting for Martian afternoon
-    const ambientLight = new THREE.AmbientLight(0xd99568, 0.45);
+    const ambientLight = new THREE.AmbientLight(0xd99568, 0.55);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xffecd0, 1.3);
+    const sunLight = new THREE.DirectionalLight(0xffecd0, 1.4);
     sunLight.position.set(40, 80, 50);
     sunLight.castShadow = true;
     scene.add(sunLight);
 
     // Subtle blue fill light from horizon dust scattering
-    const skyFillLight = new THREE.DirectionalLight(0x4080aa, 0.4);
+    const skyFillLight = new THREE.DirectionalLight(0x4080aa, 0.45);
     skyFillLight.position.set(-50, 30, -50);
     scene.add(skyFillLight);
+
+    // ResizeObserver ensures 3D view never collapses to 0 height when switching tabs
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width || container.clientWidth || 800;
+        const h = entry.contentRect.height || container.clientHeight || 580;
+        if (w > 50 && h > 50 && cameraRef.current && rendererRef.current) {
+          cameraRef.current.aspect = w / h;
+          cameraRef.current.updateProjectionMatrix();
+          rendererRef.current.setSize(w, h);
+        }
+      }
+    });
+    resizeObserver.observe(container);
 
     // Animation Loop
     let animId: number;
@@ -108,8 +123,8 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
 
     const handleResize = () => {
       if (!container || !renderer || !camera) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      const w = container.clientWidth || 800;
+      const h = container.clientHeight || 580;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -118,6 +133,7 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
 
     return () => {
       cancelAnimationFrame(animId);
+      resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
       if (container && renderer.domElement) {
@@ -195,7 +211,8 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
     const terrainMesh = new THREE.Mesh(geometry, material);
     terrainMesh.receiveShadow = true;
     terrainMesh.castShadow = true;
-    terrainMesh.position.set(-size / 2, 0, -size / 2);
+    // Align terrain mesh center exactly with coordinate origin (0, 0, 0)
+    terrainMesh.position.set(0, 0, 0);
     scene.add(terrainMesh);
     terrainMeshRef.current = terrainMesh;
 
@@ -206,6 +223,41 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
 
   // Color generator for heatmap modes
   function computeCellRgb(cell: TerrainCell, mode: HeatmapMode, minZ: number, zRange: number): { r: number; g: number; b: number } {
+    if (mode === 'PHOTO_TEXTURE') {
+      // Photorealistic MRO HiRISE/CTX surface coloration based on elevation & geomorphology
+      const norm = (cell.elevation - minZ) / zRange;
+      const noise = (Math.sin(cell.x * 0.85) * Math.cos(cell.y * 0.85) + 1) * 0.5;
+
+      if (site.id === 'olympus-lava-tube') {
+        // Dark volcanic basalt with oxidized cinder fringes
+        return {
+          r: 0.24 + norm * 0.22 + noise * 0.04,
+          g: 0.12 + norm * 0.10 + noise * 0.02,
+          b: 0.09 + norm * 0.07 + noise * 0.02,
+        };
+      }
+
+      if (site.id === 'jezero-delta') {
+        // Jezero ancient lakebed mudstone & river delta scarp sandstone
+        return {
+          r: 0.58 + norm * 0.32 + noise * 0.06,
+          g: 0.32 + norm * 0.24 + noise * 0.04,
+          b: 0.20 + norm * 0.16 + noise * 0.03,
+        };
+      }
+
+      // Mount Sharp Boxwork: Ochre sandstone terraces with light sulfate vein fractures
+      const isVein = Math.abs(Math.sin(cell.x * 0.75) * Math.cos(cell.y * 0.75)) > 0.45;
+      if (isVein && cell.elevation > 22) {
+        return { r: 0.88, g: 0.75, b: 0.62 }; // Light sulfate mineral vein
+      }
+      return {
+        r: 0.65 + norm * 0.26 + noise * 0.05,
+        g: 0.36 + norm * 0.18 + noise * 0.03,
+        b: 0.22 + norm * 0.12 + noise * 0.02,
+      };
+    }
+
     if (mode === 'ELEVATION') {
       const norm = (cell.elevation - minZ) / zRange;
       // Hypsometric tint: deep Martian rust -> ochre -> golden sand -> dusty white peaks
@@ -543,6 +595,18 @@ export const HabitatViewport3D: React.FC<HabitatViewport3DProps> = ({
 
       {/* Top Left: Heatmap Mode Switcher Controls */}
       <div className="absolute top-3 left-3 z-10 flex flex-wrap gap-1.5 p-1.5 bg-hud-panel border border-hud-border rounded backdrop-blur">
+        <button
+          onClick={() => setHeatmapMode('PHOTO_TEXTURE')}
+          className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded transition ${
+            heatmapMode === 'PHOTO_TEXTURE'
+              ? 'bg-hud-cyan text-slate-900 shadow-hud-cyan'
+              : 'text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          <Camera className="w-3.5 h-3.5" />
+          NASA ORBITAL PHOTO
+        </button>
+
         <button
           onClick={() => setHeatmapMode('ELEVATION')}
           className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded transition ${

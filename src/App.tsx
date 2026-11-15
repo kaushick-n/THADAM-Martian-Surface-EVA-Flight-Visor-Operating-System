@@ -514,7 +514,7 @@ export const App: React.FC = () => {
       ========================================================================= */}
       <main className="flex-1 p-3 flex flex-col gap-3">
         {displayMode === 'HABITAT_3D' && (
-          <div className="flex-1 min-h-[560px]">
+          <div className="flex-1 w-full h-[620px] min-h-[560px]">
             <HabitatViewport3D
               site={currentSite}
               grid={terrainGrid}
@@ -527,7 +527,7 @@ export const App: React.FC = () => {
         )}
 
         {displayMode === 'GLOVED_TABLET' && (
-          <div className="flex-1 min-h-[560px]">
+          <div className="flex-1 w-full h-[620px] min-h-[560px]">
             <GlovedTabletView
               site={currentSite}
               grid={terrainGrid}
@@ -539,7 +539,7 @@ export const App: React.FC = () => {
         )}
 
         {displayMode === 'HELMET_HUD' && (
-          <div className="flex-1 min-h-[560px]">
+          <div className="flex-1 w-full h-[620px] min-h-[560px]">
             <HelmetVisorHUD
               site={currentSite}
               grid={terrainGrid}
